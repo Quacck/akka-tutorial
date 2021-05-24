@@ -1,15 +1,16 @@
 package de.hpi.ddm.actors;
 
 import java.io.Serializable;
-import java.util.ArrayList;
-import java.util.Arrays;
-import java.util.List;
+import java.util.*;
 
+import akka.NotUsed;
 import akka.actor.AbstractLoggingActor;
 import akka.actor.ActorRef;
 import akka.actor.PoisonPill;
 import akka.actor.Props;
 import akka.actor.Terminated;
+import akka.stream.javadsl.Sink;
+import akka.stream.javadsl.Source;
 import de.hpi.ddm.structures.BloomFilter;
 import lombok.AllArgsConstructor;
 import lombok.Data;
@@ -33,7 +34,7 @@ public class Master extends AbstractLoggingActor {
 		this.workers = new ArrayList<>();
 		this.largeMessageProxy = this.context().actorOf(LargeMessageProxy.props(), LargeMessageProxy.DEFAULT_NAME);
 		this.welcomeData = welcomeData;
-		this.userEntries = new ArrayList<>();
+		this.userEntries = new HashMap<>();
 	}
 
 	////////////////////
@@ -56,20 +57,9 @@ public class Master extends AbstractLoggingActor {
 		private static final long serialVersionUID = 3303081601659723997L;
 	}
 
-	@Data @AllArgsConstructor
-	public static class UserHint implements Serializable{
-		private int userId;
-		private ArrayList<String> encryptedHints;
-	}
-
-	@Data @AllArgsConstructor
-	public static class TaskMessage implements Serializable{
-		private String characters;
-		private ArrayList<UserHint> userHints;
-	}
-
 	@Data
 	public static class UserEntry implements Serializable{
+		private static final long serialVersionUID = 3304081602659723997L;
 		private int userId;
 		private String userName;
 		private String passwordCharacters;
@@ -106,11 +96,16 @@ public class Master extends AbstractLoggingActor {
 	private final ActorRef largeMessageProxy;
 	private final BloomFilter welcomeData;
 
+	String allCharacters = null;
+
 	private long startTime;
 
-	private final ArrayList<UserEntry> userEntries;
+	private final HashMap<Integer, UserEntry> userEntries;
+	private final LinkedList<Worker.TaskMessage> taskQueue = new LinkedList<>();
 
-	private int lastSentIndex = 0;
+	private boolean isInitialRead = true;
+	private boolean hasReceivedEverything = false;
+	private int usersToCrack = 0;
 
 	/////////////////////
 	// Actor Lifecycle //
@@ -132,7 +127,9 @@ public class Master extends AbstractLoggingActor {
 				.match(BatchMessage.class, this::handle)
 				.match(Terminated.class, this::handle)
 				.match(RegistrationMessage.class, this::handle)
-				// TODO: Add further messages here to share work between Master and Worker actors
+				.match(Worker.FinishedTaskMessage.class, this::handle)
+				.match(Worker.HintMessage.class, this::handle)
+				.match(Worker.GotSomeCrackBro.class, this::handle)
 				.matchAny(object -> this.log().info("Received unknown message: \"{}\"", object.toString()))
 				.build();
 	}
@@ -143,8 +140,8 @@ public class Master extends AbstractLoggingActor {
 		this.reader.tell(new Reader.ReadMessage(), this.self());
 	}
 
-	protected void handle(BatchMessage message) {
-
+	protected void handle(BatchMessage message) throws InterruptedException {
+		this.log().info("Receiving BatchMessage " + message);
 		// TODO: This is where the task begins:
 		// - The Master received the first batch of input records.
 		// - To receive the next batch, we need to send another ReadMessage to the reader.
@@ -173,46 +170,56 @@ public class Master extends AbstractLoggingActor {
 		**/
 
 		if (message.getLines().isEmpty()) {
-		//	// TODO:  wait for all workers to finish
-		//	this.terminate();
+			this.hasReceivedEverything = true;
 			return;
 		}
 
 		// TODO: split up batches more intelligently
-		ArrayList<UserHint> hints = new ArrayList<>();
-		String allCharacters = null;
+		ArrayList<Worker.UserHint> hints = new ArrayList<>();
+		int ruediger = 0;
+		int lines = message.getLines().size();
+		int taskBatchSize = Math.min(lines, 10);
 		// create user entries from read lines
 		for (String[] line :message.getLines()){
 			UserEntry userEntry = new UserEntry(line);
+			this.usersToCrack++;
 			if (allCharacters == null) {
 				allCharacters = userEntry.passwordCharacters;
 			}
-			this.userEntries.add(userEntry);
-			UserHint hint = new UserHint(userEntry.getUserId(), userEntry.getEncryptedHints());
+			this.userEntries.put(userEntry.getUserId(), userEntry);
+			Worker.UserHint hint = new Worker.UserHint(userEntry.getUserId(), userEntry.getEncryptedHints());
 			hints.add(hint);
-		}
-
-		// create one task for every possible missing character each (with hints
-		for (int i = 0; i < allCharacters.length(); i++ ) {
-			String chars = allCharacters.substring(0, i) + allCharacters.substring(i+1);
-			TaskMessage taskMessage = new TaskMessage(chars, hints);
-			// send task to worker
-			this.largeMessageProxy.tell(new LargeMessageProxy.LargeMessage<TaskMessage>(taskMessage, this.workers.get(lastSentIndex)), this.self());
-			lastSentIndex++;
-			if(lastSentIndex >= this.workers.size()){
-				lastSentIndex = 0;
+			ruediger++;
+			// create one task for every possible missing character each (with hints)
+			if(ruediger >= taskBatchSize) {
+				for (int i = 0; i < allCharacters.length(); i += 1) {
+					String chars = allCharacters.substring(0, i) + allCharacters.substring(i + 1);
+					Worker.TaskMessage taskMessage = new Worker.HintTaskMessage(chars, allCharacters.charAt(i), hints);
+					taskQueue.add(taskMessage);
+				}
+				hints.clear();
+				ruediger = 0;
 			}
 		}
 
-		// TODO: Send (partial) results to the Collector
-		this.collector.tell(new Collector.CollectMessage("If I had results, this would be one."), this.self());
+		if(isInitialRead){
+			// assign initial tasks to workers
+			for(ActorRef worker: workers){
+				Worker.TaskMessage nextTask = taskQueue.pollFirst();
+				if (nextTask != null) {
+					this.largeMessageProxy.tell(new LargeMessageProxy.LargeMessage<>(nextTask, worker), this.self());
+				}
+			}
+			isInitialRead = false;
+		}
 
-		// TODO: Fetch further lines from the Reader
+		// Fetch further lines from the Reader
 		this.reader.tell(new Reader.ReadMessage(), this.self());
-
 	}
 
 	protected void terminate() {
+		this.log().info("Starting the REAPEEERRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRR");
+
 		this.collector.tell(new Collector.PrintMessage(), this.self());
 
 		this.reader.tell(PoisonPill.getInstance(), ActorRef.noSender());
@@ -232,11 +239,42 @@ public class Master extends AbstractLoggingActor {
 	protected void handle(RegistrationMessage message) {
 		this.context().watch(this.sender());
 		this.workers.add(this.sender());
-		this.log().info("Registered {}", this.sender());
+		this.log().info("Registered {}", this.sender());;;
+		Worker.TaskMessage nextTask = taskQueue.pollFirst();
+		if (nextTask != null) {
+			this.largeMessageProxy.tell(new LargeMessageProxy.LargeMessage<>(nextTask, this.sender()), this.self());
+		}
+	}
 
-		this.largeMessageProxy.tell(new LargeMessageProxy.LargeMessage<>(new Worker.WelcomeMessage(this.welcomeData), this.sender()), this.self());
+	protected void handle(Worker.FinishedTaskMessage message){
+		this.log().info(sender().toString() + " finished their Task.");
+		Worker.TaskMessage nextTask = taskQueue.pollFirst();
+		if (nextTask != null) {
+			this.log().info("Assigning new task to: " + this.sender().toString());
+			this.largeMessageProxy.tell(new LargeMessageProxy.LargeMessage<>(nextTask, this.sender()), this.self());
+		}
+	}
+	protected void handle(Worker.GotSomeCrackBro message){
+		this.log().info(sender().toString() + " crack? CRACK ?! CRACKED SOMETHING!!!!!!!!!");
 
-		// TODO: Assign some work to registering workers. Note that the processing of the global task might have already started.
+		this.collector.tell(new Collector.CollectMessage(message.getUserId() + ";" + message.getDecryptedPassword()), this.self());
+
+		usersToCrack--;
+		if(this.hasReceivedEverything && usersToCrack < 1){
+			this.terminate();
+		}
+	}
+
+	protected void handle(Worker.HintMessage message){
+		this.log().info("Got Hint from " + sender().toString());
+		UserEntry user = userEntries.get(message.getUserId());
+		String chars = user.getPasswordCharacters().replaceFirst(""+message.getMissingChar(), ""); // well :/
+		user.setPasswordCharacters(chars);
+		user.setUnsolvedHints(user.getUnsolvedHints() - 1);
+		if(user.getUnsolvedHints() <= 0){
+			// create task on crack
+			taskQueue.add(new Worker.CrackTaskMessage(user.getUserId(), user.passwordCharacters, user.passwordLength, user.getEncryptedPassword()));
+		}
 	}
 
 	protected void handle(Terminated message) {

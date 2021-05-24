@@ -4,7 +4,7 @@ import java.io.Serializable;
 import java.io.UnsupportedEncodingException;
 import java.security.MessageDigest;
 import java.security.NoSuchAlgorithmException;
-import java.util.List;
+import java.util.*;
 
 import akka.actor.AbstractLoggingActor;
 import akka.actor.ActorRef;
@@ -18,6 +18,7 @@ import de.hpi.ddm.structures.BloomFilter;
 import de.hpi.ddm.systems.MasterSystem;
 import lombok.AllArgsConstructor;
 import lombok.Data;
+import lombok.Getter;
 import lombok.NoArgsConstructor;
 import akka.cluster.Member;
 import akka.cluster.MemberStatus;
@@ -53,9 +54,50 @@ public class Worker extends AbstractLoggingActor {
 	public static class HintMessage implements Serializable{
 		private static final long serialVersionUID = 3303081601659723990L;
 		private int userId;
-		private String characters;
+		private char missingChar;
 		private String encryptedHint;
 		private String decryptedHint;
+	}
+
+	@Data @AllArgsConstructor @NoArgsConstructor
+	public static class UserHint implements Serializable{
+		private static final long serialVersionUID = 8343040952748609598L;
+		private int userId;
+		private ArrayList<String> encryptedHints;
+	}
+
+	@Data @AllArgsConstructor @NoArgsConstructor
+	public static class GotSomeCrackBro implements Serializable{ //theres some crack
+		private static final long serialVersionUID = 8343040952768609598L;
+		private int userId;
+		private String decryptedPassword;
+	}
+
+	@Data
+	public static class TaskMessage implements Serializable{
+		private static final long serialVersionUID = 1111040962748609598L;
+	}
+
+	@Data @AllArgsConstructor @NoArgsConstructor
+	public static class CrackTaskMessage extends TaskMessage{
+		private static final long serialVersionUID = 2243040962748609538L;
+		private int userId;
+		private String characters;
+		private int passwordLength;
+		private String hash;
+	}
+	@Data @AllArgsConstructor @NoArgsConstructor
+	public static class HintTaskMessage extends TaskMessage implements Serializable{
+		private static final long serialVersionUID = 8343040962748609528L;
+		private String characters;
+		private char missingChar;
+		private ArrayList<UserHint> userHints;
+	}
+
+
+	@Getter	@NoArgsConstructor
+	public static class FinishedTaskMessage implements Serializable{
+		private static final long serialVersionUID = 8343040962749609598L;
 	}
 
 	/////////////////
@@ -94,7 +136,8 @@ public class Worker extends AbstractLoggingActor {
 				.match(MemberUp.class, this::handle)
 				.match(MemberRemoved.class, this::handle)
 				.match(WelcomeMessage.class, this::handle)
-				.match(Master.TaskMessage.class, this::handle)
+				.match(HintTaskMessage.class, this::handle)
+				.match(CrackTaskMessage.class, this::handle)
 				.matchAny(object -> this.log().info("Received unknown message: \"{}\"", object.toString()))
 				.build();
 	}
@@ -132,8 +175,54 @@ public class Worker extends AbstractLoggingActor {
 		this.log().info("WelcomeMessage with " + message.getWelcomeData().getSizeInMB() + " MB data received in " + transmissionTime + " ms.");
 	}
 
-	private void handle(Master.TaskMessage message) {
-		this.log().info("Received TaskMesage with " + message.getUserHints());
+	private void handle(CrackTaskMessage message) {
+		this.log().info("Starting CrackTask: " + message);
+
+		ArrayList<String> permutations = new ArrayList<>();
+		heapPermutation(message.getCharacters().toCharArray(), message.getCharacters().length(), message.passwordLength, permutations);
+
+		for(String permutation : permutations){
+			String hash = hash(permutation);
+			if (hash == message.hash) {
+				this.getContext()
+						.actorSelection(this.masterSystem.address() + "/user/" + Master.DEFAULT_NAME)
+						.tell(new GotSomeCrackBro(message.userId, permutation), this.self());
+				break;
+			}
+		}
+
+		this.getContext()
+				.actorSelection(this.masterSystem.address() + "/user/" + Master.DEFAULT_NAME)
+				.tell(new FinishedTaskMessage(), this.self());
+}
+
+private void handle(HintTaskMessage message) {
+		this.log().info("Received HintTaskMessage with " + message.getUserHints());
+		HashMap<String, Integer> hints = new HashMap<>();
+		for(UserHint userHint : message.getUserHints()){
+			for(String hash: userHint.getEncryptedHints()){
+				hints.put(hash, userHint.userId);
+			}
+		}
+
+		ArrayList<String> permutations = new ArrayList<>();
+		heapPermutation(message.getCharacters().toCharArray(), message.getCharacters().length(), message.getCharacters().length(), permutations);
+
+		for(String permutation : permutations){
+			String hash = hash(permutation);
+			Integer user = hints.get(hash);
+			if (user != null) {
+				this.getContext()
+						.actorSelection(this.masterSystem.address() + "/user/" + Master.DEFAULT_NAME)
+						.tell(new HintMessage(user, message.getMissingChar(), hash, permutation), this.self());
+			}
+			hints.remove(hash);
+		}
+
+		this.getContext()
+				.actorSelection(this.masterSystem.address() + "/user/" + Master.DEFAULT_NAME)
+				.tell(new FinishedTaskMessage(), this.self());
+
 	}
 
 	private String hash(String characters) {

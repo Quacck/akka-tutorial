@@ -109,13 +109,12 @@ public class LargeMessageProxy extends AbstractLoggingActor {
 
 		ArrayList<BytesMessage<byte[]>> parts = new ArrayList<>();
 
-		int chunk = 10; // chunk size to divide
+		int chunk = 100; // chunk size to divide
 		for(int i=0;i<array.length;i+=chunk){
 			parts.add(new BytesMessage<byte[]>(Arrays.copyOfRange(array, i, Math.min(array.length,i+chunk)), false, sender, receiver));
 		}
 		Source<BytesMessage<byte[]>, NotUsed> source = Source.from(parts);
 		Sink<BytesMessage<byte[]>, NotUsed> sink = Sink.<BytesMessage<byte[]>>actorRefWithBackpressure(receiverProxyRef, new StreamInitialized(), Ack.INSTANCE, new StreamCompleted(receiver), StreamFailure::new);
-
 		source.runWith(sink, this.getContext().getSystem());
 	}
 
@@ -136,6 +135,7 @@ public class LargeMessageProxy extends AbstractLoggingActor {
 	}
 
 	private void handle(StreamInitialized initialized) {
+
 		this.receiveBuffer.clear();
 		sender().tell(Ack.INSTANCE, self());
 	}
