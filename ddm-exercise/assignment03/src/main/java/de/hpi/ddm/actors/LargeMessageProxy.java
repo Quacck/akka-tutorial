@@ -102,20 +102,24 @@ public class LargeMessageProxy extends AbstractLoggingActor {
 		Object message = largeMessage.getMessage();
 		ActorRef sender = this.sender();
 		ActorRef receiver = largeMessage.getReceiver();
-		ActorSelection receiverProxy = this.context().actorSelection(receiver.path().child(DEFAULT_NAME));
-		ActorRef receiverProxyRef = receiverProxy.resolveOne(Duration.ofSeconds(5)).toCompletableFuture().get();
+		try {
+			ActorSelection receiverProxy = this.context().actorSelection(receiver.path().child(DEFAULT_NAME));
+			ActorRef receiverProxyRef = receiverProxy.resolveOne(Duration.ofSeconds(5)).toCompletableFuture().get();
+			byte[] array = KryoPoolSingleton.get().toBytesWithClass(message);
 
-		byte[] array = KryoPoolSingleton.get().toBytesWithClass(message);
+			ArrayList<BytesMessage<byte[]>> parts = new ArrayList<>();
 
-		ArrayList<BytesMessage<byte[]>> parts = new ArrayList<>();
-
-		int chunk = 100; // chunk size to divide
-		for(int i=0;i<array.length;i+=chunk){
-			parts.add(new BytesMessage<byte[]>(Arrays.copyOfRange(array, i, Math.min(array.length,i+chunk)), false, sender, receiver));
+			int chunk = 100; // chunk size to divide
+			for(int i=0;i<array.length;i+=chunk){
+				parts.add(new BytesMessage<byte[]>(Arrays.copyOfRange(array, i, Math.min(array.length,i+chunk)), false, sender, receiver));
+			}
+			Source<BytesMessage<byte[]>, NotUsed> source = Source.from(parts);
+			Sink<BytesMessage<byte[]>, NotUsed> sink = Sink.<BytesMessage<byte[]>>actorRefWithBackpressure(receiverProxyRef, new StreamInitialized(), Ack.INSTANCE, new StreamCompleted(receiver), StreamFailure::new);
+			source.runWith(sink, this.getContext().getSystem());
+		} catch (Exception e){
+			this.log().error(String.format("Failed to send %s to %s with error %s", message, receiver, e ));
+			this.sender().tell(largeMessage, self());
 		}
-		Source<BytesMessage<byte[]>, NotUsed> source = Source.from(parts);
-		Sink<BytesMessage<byte[]>, NotUsed> sink = Sink.<BytesMessage<byte[]>>actorRefWithBackpressure(receiverProxyRef, new StreamInitialized(), Ack.INSTANCE, new StreamCompleted(receiver), StreamFailure::new);
-		source.runWith(sink, this.getContext().getSystem());
 	}
 
 	private void handle(StreamCompleted complete){

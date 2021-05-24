@@ -130,6 +130,7 @@ public class Master extends AbstractLoggingActor {
 				.match(Worker.FinishedTaskMessage.class, this::handle)
 				.match(Worker.HintMessage.class, this::handle)
 				.match(Worker.GotSomeCrackBro.class, this::handle)
+				.match(LargeMessageProxy.LargeMessage.class, this::handle)
 				.matchAny(object -> this.log().info("Received unknown message: \"{}\"", object.toString()))
 				.build();
 	}
@@ -269,6 +270,11 @@ public class Master extends AbstractLoggingActor {
 		if(this.hasReceivedEverything && usersToCrack < 1){
 			this.terminate();
 		}
+	}
+
+	protected void handle(LargeMessageProxy.LargeMessage<Worker.TaskMessage> message){
+		this.log().error("Received Error Message from my LargeMessageProxy");
+		this.taskQueue.add(message.getMessage());
 	}
 
 	protected void handle(Worker.HintMessage message){
