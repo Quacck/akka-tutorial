@@ -209,16 +209,20 @@ private void handle(HintTaskMessage message) {
 		ArrayList<String> permutations = new ArrayList<>();
 		heapPermutation(message.getCharacters().toCharArray(), message.getCharacters().length(), message.getCharacters().length(), permutations);
 
+		int hintsFounds = 0;
+
 		for(String permutation : permutations){
 			String hash = hash(permutation);
 			Integer user = hints.get(hash);
 			if (user != null) {
+				hintsFounds++;
 				this.getContext()
 						.actorSelection(this.masterSystem.address() + "/user/" + Master.DEFAULT_NAME)
 						.tell(new HintMessage(user, message.getMissingChar(), hash, permutation), this.self());
 			}
 			hints.remove(hash);
 		}
+
 
 		this.getContext()
 				.actorSelection(this.masterSystem.address() + "/user/" + Master.DEFAULT_NAME)

@@ -175,12 +175,11 @@ public class Master extends AbstractLoggingActor {
 		}
 
 		// TODO: split up batches more intelligently
-		int ruediger = 0;
 		int lines = message.getLines().size();
 		int taskBatchSize = Math.min(lines, 10);
 		// create user entries from read lines
-		for (String[] line :message.getLines()){
-			ArrayList<Worker.UserHint> hints = new ArrayList<>();
+		ArrayList<Worker.UserHint> hints = new ArrayList<>();
+		for (String[] line : message.getLines()){
 			UserEntry userEntry = new UserEntry(line);
 			this.usersToCrack++;
 			if (allCharacters == null) {
@@ -189,16 +188,23 @@ public class Master extends AbstractLoggingActor {
 			this.userEntries.put(userEntry.getUserId(), userEntry);
 			Worker.UserHint hint = new Worker.UserHint(userEntry.getUserId(), userEntry.getEncryptedHints());
 			hints.add(hint);
-			ruediger++;
 			// create one task for every possible missing character each (with hints)
-			if(ruediger >= taskBatchSize) {
+			if(hints.size() >= taskBatchSize) {
+
 				for (int i = 0; i < allCharacters.length(); i += 1) {
 					String chars = allCharacters.substring(0, i) + allCharacters.substring(i + 1);
 					Worker.TaskMessage taskMessage = new Worker.HintTaskMessage(chars, allCharacters.charAt(i), hints);
 					taskQueue.add(taskMessage);
 				}
 				hints =  new ArrayList<>();
-				ruediger = 0;
+			}
+		}
+		// generate remaining tasks if necessary
+		if(hints.size() > 0){
+			for (int i = 0; i < allCharacters.length(); i += 1) {
+				String chars = allCharacters.substring(0, i) + allCharacters.substring(i + 1);
+				Worker.TaskMessage taskMessage = new Worker.HintTaskMessage(chars, allCharacters.charAt(i), hints);
+				taskQueue.add(taskMessage);
 			}
 		}
 
@@ -256,8 +262,8 @@ public class Master extends AbstractLoggingActor {
 	}
 	protected void handle(Worker.GotSomeCrackBro message){
 		this.log().info(sender().toString() + " crack? CRACK ?! CRACKED SOMETHING!!!!!!!!!");
-
-		this.collector.tell(new Collector.CollectMessage(message.getUserId() + ";" + message.getDecryptedPassword()), this.self());
+																													//perfect
+		this.collector.tell(new Collector.CollectMessage(message.getUserId() + ";" + this.userEntries.get(message.getUserId()).getUserName() + ";" + message.getDecryptedPassword()), this.self());
 
 		usersToCrack--;
 		if(this.hasReceivedEverything && usersToCrack < 1){
