@@ -177,13 +177,14 @@ public class Worker extends AbstractLoggingActor {
 
 	private void handle(CrackTaskMessage message) {
 		this.log().info("Starting CrackTask: " + message);
-
+		String pw = "";
 		ArrayList<String> permutations = new ArrayList<>();
-		heapPermutation(message.getCharacters().toCharArray(), message.getCharacters().length(), message.passwordLength, permutations);
+		printAllKLengthToList(message.getCharacters().toCharArray(), message.passwordLength, permutations);
 
 		for(String permutation : permutations){
 			String hash = hash(permutation);
-			if (hash == message.hash) {
+			if (hash.equals(message.hash)) {
+				pw = hash;
 				this.getContext()
 						.actorSelection(this.masterSystem.address() + "/user/" + Master.DEFAULT_NAME)
 						.tell(new GotSomeCrackBro(message.userId, permutation), this.self());
@@ -267,4 +268,43 @@ private void handle(HintTaskMessage message) {
 			}
 		}
 	}
+
+	// inspired by https://www.geeksforgeeks.org/print-all-combinations-of-given-length/
+	static void printAllKLengthToList(char[] set, int k, List<String> list)
+	{
+		int n = set.length;
+		printAllKLengthRec(set, "", n, k, list);
+	}
+
+	// The main recursive method
+	// to print all possible
+	// strings of length k
+	static void printAllKLengthRec(char[] set,
+								   String prefix,
+								   int n, int k,List<String> list)
+	{
+		// Base case: k is 0,
+		// print prefix
+		if (k == 0)
+		{
+			list.add(prefix);
+			return;
+		}
+
+		// One by one add all characters
+		// from set and recursively
+		// call for k equals to k-1
+		for (int i = 0; i < n; ++i)
+		{
+
+			// Next character of input added
+			String newPrefix = prefix + set[i];
+
+			// k is decreased, because
+			// we have added a new character
+			printAllKLengthRec(set, newPrefix,
+					n, k - 1, list);
+		}
+	}
+
 }

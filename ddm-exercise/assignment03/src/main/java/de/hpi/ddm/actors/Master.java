@@ -175,12 +175,12 @@ public class Master extends AbstractLoggingActor {
 		}
 
 		// TODO: split up batches more intelligently
-		ArrayList<Worker.UserHint> hints = new ArrayList<>();
 		int ruediger = 0;
 		int lines = message.getLines().size();
 		int taskBatchSize = Math.min(lines, 10);
 		// create user entries from read lines
 		for (String[] line :message.getLines()){
+			ArrayList<Worker.UserHint> hints = new ArrayList<>();
 			UserEntry userEntry = new UserEntry(line);
 			this.usersToCrack++;
 			if (allCharacters == null) {
@@ -197,7 +197,7 @@ public class Master extends AbstractLoggingActor {
 					Worker.TaskMessage taskMessage = new Worker.HintTaskMessage(chars, allCharacters.charAt(i), hints);
 					taskQueue.add(taskMessage);
 				}
-				hints.clear();
+				hints =  new ArrayList<>();
 				ruediger = 0;
 			}
 		}
