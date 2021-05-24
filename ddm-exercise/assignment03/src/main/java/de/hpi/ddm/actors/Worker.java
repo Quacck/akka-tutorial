@@ -48,7 +48,16 @@ public class Worker extends AbstractLoggingActor {
 		private static final long serialVersionUID = 8343040942748609598L;
 		private BloomFilter welcomeData;
 	}
-	
+
+	@Data @AllArgsConstructor
+	public static class HintMessage implements Serializable{
+		private static final long serialVersionUID = 3303081601659723990L;
+		private int userId;
+		private String characters;
+		private String encryptedHint;
+		private String decryptedHint;
+	}
+
 	/////////////////
 	// Actor State //
 	/////////////////
@@ -85,7 +94,7 @@ public class Worker extends AbstractLoggingActor {
 				.match(MemberUp.class, this::handle)
 				.match(MemberRemoved.class, this::handle)
 				.match(WelcomeMessage.class, this::handle)
-				// TODO: Add further messages here to share work between Master and Worker actors
+				.match(Master.TaskMessage.class, this::handle)
 				.matchAny(object -> this.log().info("Received unknown message: \"{}\"", object.toString()))
 				.build();
 	}
@@ -117,12 +126,16 @@ public class Worker extends AbstractLoggingActor {
 		if (this.masterSystem.equals(message.member()))
 			this.self().tell(PoisonPill.getInstance(), ActorRef.noSender());
 	}
-	
+
 	private void handle(WelcomeMessage message) {
 		final long transmissionTime = System.currentTimeMillis() - this.registrationTime;
 		this.log().info("WelcomeMessage with " + message.getWelcomeData().getSizeInMB() + " MB data received in " + transmissionTime + " ms.");
 	}
-	
+
+	private void handle(Master.TaskMessage message) {
+		this.log().info("Received TaskMesage with " + message.getUserHints());
+	}
+
 	private String hash(String characters) {
 		try {
 			MessageDigest digest = MessageDigest.getInstance("SHA-256");
