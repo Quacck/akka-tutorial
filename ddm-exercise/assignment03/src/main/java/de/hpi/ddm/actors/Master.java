@@ -143,7 +143,6 @@ public class Master extends AbstractLoggingActor {
 
 	protected void handle(BatchMessage message) throws InterruptedException {
 		this.log().info("Receiving BatchMessage " + message);
-		// TODO: This is where the task begins:
 		// - The Master received the first batch of input records.
 		// - To receive the next batch, we need to send another ReadMessage to the reader.
 		// - If the received BatchMessage is empty, we have seen all data for this task.
@@ -157,25 +156,12 @@ public class Master extends AbstractLoggingActor {
 		// b) Memory reduction: If the batches are processed sequentially, the memory consumption can be kept constant; if the entire input is read into main memory, the memory consumption scales at least linearly with the input size.
 		// - It is your choice, how and if you want to make use of the batched inputs. Simply aggregate all batches in the Master and start the processing afterwards, if you wish.
 
-		/** 1. Master gets the recods of all password entries form the reader sequentially
-		 *	3
-		 * 	in cracking actual passwords:
-		 *		3.1 give workers all the hint-hashes oof
-		 *			do I already know that hash?
-		 *		-> if not:
-		 *	compute hashes
-		 *
-		 *		3.2 give workers task: crack password for user (which is just the)
-		 *
-		 *
-		**/
 
 		if (message.getLines().isEmpty()) {
 			this.hasReceivedEverything = true;
 			return;
 		}
 
-		// TODO: split up batches more intelligently
 		int lines = message.getLines().size();
 		int taskBatchSize = Math.min(lines, 10);
 		// create user entries from read lines
