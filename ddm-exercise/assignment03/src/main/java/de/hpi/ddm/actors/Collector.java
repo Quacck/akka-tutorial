@@ -74,15 +74,5 @@ public class Collector extends AbstractLoggingActor {
 	
 	protected void handle(PrintMessage message) {
 		this.results.forEach(result -> this.log().info("{}", result));
-		try {
-			FileWriter myWriter = new FileWriter("filename.txt");
-			for (String result : this.results) {
-				myWriter.write(result + "\n");
-			}
-			myWriter.close();
-		} catch (IOException e) {
-			System.out.println("An error occurred while writing to file.");
-			e.printStackTrace();
-		}
 	}
 }

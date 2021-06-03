@@ -198,7 +198,7 @@ public class Worker extends AbstractLoggingActor {
 }
 
 private void handle(HintTaskMessage message) {
-		this.log().info("Received HintTaskMessage with " + message.getUserHints());
+		this.log().info("Received HintTaskMessage");
 		HashMap<String, Integer> hints = new HashMap<>();
 		for(UserHint userHint : message.getUserHints()){
 			for(String hash: userHint.getEncryptedHints()){
