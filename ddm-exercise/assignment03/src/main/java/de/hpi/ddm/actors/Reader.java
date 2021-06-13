@@ -10,7 +10,9 @@ import akka.actor.AbstractLoggingActor;
 import akka.actor.Props;
 import de.hpi.ddm.singletons.ConfigurationSingleton;
 import de.hpi.ddm.singletons.DatasetDescriptorSingleton;
+import lombok.AllArgsConstructor;
 import lombok.Data;
+import lombok.NoArgsConstructor;
 
 public class Reader extends AbstractLoggingActor {
 
@@ -28,7 +30,7 @@ public class Reader extends AbstractLoggingActor {
 	// Actor Messages //
 	////////////////////
 
-	@Data
+	@Data @NoArgsConstructor
 	public static class ReadMessage implements Serializable {
 		private static final long serialVersionUID = -3254147511955012292L;
 	}

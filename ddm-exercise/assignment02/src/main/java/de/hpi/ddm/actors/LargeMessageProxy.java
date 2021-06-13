@@ -12,6 +12,7 @@ import akka.actor.ActorRef;
 import akka.actor.ActorSelection;
 import akka.actor.Props;
 import akka.stream.javadsl.*;
+import com.esotericsoftware.minlog.Log;
 import de.hpi.ddm.singletons.KryoPoolSingleton;
 import lombok.AllArgsConstructor;
 import lombok.Data;
@@ -19,6 +20,8 @@ import lombok.NoArgsConstructor;
 
 // our solution was heavily inspired by  https://doc.akka.io/docs/akka/current/stream/operators/Sink/actorRefWithBackpressure.html
 public class LargeMessageProxy extends AbstractLoggingActor {
+
+	int CHUNKYNESS = 1024; // chunk size to divide
 
 	////////////////////////
 	// Actor Construction //
@@ -50,17 +53,21 @@ public class LargeMessageProxy extends AbstractLoggingActor {
 		private ActorRef receiver;
 	}
 
-	@Data
-	static class StreamInitialized {
+	@Data @NoArgsConstructor
+	static class StreamInitialized implements Serializable {
+		private static final long serialVersionUID = 5057807743872319842L;
 	}
 
-	@AllArgsConstructor @Data
-	static class StreamCompleted {
+	@Data @AllArgsConstructor @NoArgsConstructor
+	static class StreamCompleted implements Serializable
+	{
+		private static final long serialVersionUID = 6057807777872319842L;
 		ActorRef receiver;
 	}
 
 	@Data
-	static class StreamFailure {
+	static class StreamFailure implements Serializable {
+		private static final long serialVersionUID = 9057807743889819842L;
 		private final Throwable cause;
 
 		public StreamFailure(Throwable cause) {
@@ -76,8 +83,6 @@ public class LargeMessageProxy extends AbstractLoggingActor {
 	enum Ack {
 		INSTANCE;
 	}
-
-
 	
 	/////////////////////
 	// Actor Lifecycle //
@@ -99,38 +104,45 @@ public class LargeMessageProxy extends AbstractLoggingActor {
 	}
 
 	private void handle(LargeMessage<?> largeMessage) throws ExecutionException, InterruptedException {
+		this.log().info("Received Large Message. From {}", sender());
 		Object message = largeMessage.getMessage();
 		ActorRef sender = this.sender();
 		ActorRef receiver = largeMessage.getReceiver();
-		ActorSelection receiverProxy = this.context().actorSelection(receiver.path().child(DEFAULT_NAME));
-		ActorRef receiverProxyRef = receiverProxy.resolveOne(Duration.ofSeconds(5)).toCompletableFuture().get();
+		try {
+			ActorSelection receiverProxy = this.context().actorSelection(receiver.path().child(DEFAULT_NAME));
+			ActorRef receiverProxyRef = receiverProxy.resolveOne(Duration.ofSeconds(5)).toCompletableFuture().get();
+			byte[] array = KryoPoolSingleton.get().toBytesWithClass(message);
 
-		byte[] array = KryoPoolSingleton.get().toBytesWithClass(message);
+			ArrayList<BytesMessage<byte[]>> parts = new ArrayList<>();
 
-		ArrayList<BytesMessage<byte[]>> parts = new ArrayList<>();
-
-		int chunk = 10; // chunk size to divide
-		for(int i=0;i<array.length;i+=chunk){
-			parts.add(new BytesMessage<byte[]>(Arrays.copyOfRange(array, i, Math.min(array.length,i+chunk)), false, sender, receiver));
+			for(int i=0;i<array.length;i += CHUNKYNESS){
+				parts.add(new BytesMessage<byte[]>(Arrays.copyOfRange(array, i, Math.min(array.length,i+CHUNKYNESS)), false, sender, receiver));
+			}
+			Source<BytesMessage<byte[]>, NotUsed> source = Source.from(parts);
+			Sink<BytesMessage<byte[]>, NotUsed> sink = Sink.<BytesMessage<byte[]>>actorRefWithBackpressure(receiverProxyRef, new StreamInitialized(), Ack.INSTANCE, new StreamCompleted(receiver), StreamFailure::new);
+			source.runWith(sink, this.getContext().getSystem());
+		} catch (Exception e){
+			this.sender().tell(largeMessage, self());
 		}
-		Source<BytesMessage<byte[]>, NotUsed> source = Source.from(parts);
-		Sink<BytesMessage<byte[]>, NotUsed> sink = Sink.<BytesMessage<byte[]>>actorRefWithBackpressure(receiverProxyRef, new StreamInitialized(), Ack.INSTANCE, new StreamCompleted(receiver), StreamFailure::new);
-
-		source.runWith(sink, this.getContext().getSystem());
 	}
 
 	private void handle(StreamCompleted complete){
+		this.log().info("Sent LargeMessage" +  complete.getReceiver());
 		int size = 0;
 		for (byte[] part : this.receiveBuffer) {
 			size += part.length;
 		}
 
 		byte[] fullmessage = new byte[size];
+
 		int currentPos = 0;
 		for (byte[] part : this.receiveBuffer) {
 			System.arraycopy(part, 0, fullmessage, currentPos, part.length);
 			currentPos += part.length;
 		}
+
+		// this.log().info(Arrays.toString(fullmessage));
+
 		Object decodedMessage = KryoPoolSingleton.get().fromBytes(fullmessage);
 		complete.getReceiver().tell(decodedMessage, getSelf());
 	}

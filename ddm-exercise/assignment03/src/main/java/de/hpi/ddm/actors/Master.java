@@ -3,14 +3,11 @@ package de.hpi.ddm.actors;
 import java.io.Serializable;
 import java.util.*;
 
-import akka.NotUsed;
 import akka.actor.AbstractLoggingActor;
 import akka.actor.ActorRef;
 import akka.actor.PoisonPill;
 import akka.actor.Props;
 import akka.actor.Terminated;
-import akka.stream.javadsl.Sink;
-import akka.stream.javadsl.Source;
 import de.hpi.ddm.structures.BloomFilter;
 import lombok.AllArgsConstructor;
 import lombok.Data;
@@ -41,7 +38,7 @@ public class Master extends AbstractLoggingActor {
 	// Actor Messages //
 	////////////////////
 
-	@Data
+	@Data @NoArgsConstructor
 	public static class StartMessage implements Serializable {
 		private static final long serialVersionUID = -50374816448627600L;
 	}
@@ -52,12 +49,17 @@ public class Master extends AbstractLoggingActor {
 		private List<String[]> lines;
 	}
 
-	@Data
+	@Data @NoArgsConstructor
 	public static class RegistrationMessage implements Serializable {
 		private static final long serialVersionUID = 3303081601659723997L;
 	}
 
-	@Data
+	@Data @NoArgsConstructor
+	public static class NoWorkAvailableMessage implements Serializable {
+		private static final long serialVersionUID = 5553081601659723997L;
+	}
+
+	@Data @NoArgsConstructor @AllArgsConstructor
 	public static class UserEntry implements Serializable{
 		private static final long serialVersionUID = 3304081602659723997L;
 		private int userId;
@@ -102,8 +104,7 @@ public class Master extends AbstractLoggingActor {
 
 	private final HashMap<Integer, UserEntry> userEntries;
 	private final LinkedList<Worker.TaskMessage> taskQueue = new LinkedList<>();
-
-	private boolean isInitialRead = true;
+	// private boolean isInitialRead = true;
 	private boolean hasReceivedEverything = false;
 	private int usersToCrack = 0;
 
@@ -127,7 +128,7 @@ public class Master extends AbstractLoggingActor {
 				.match(BatchMessage.class, this::handle)
 				.match(Terminated.class, this::handle)
 				.match(RegistrationMessage.class, this::handle)
-				.match(Worker.FinishedTaskMessage.class, this::handle)
+				.match(Worker.AskForTaskMessage.class, this::handle)
 				.match(Worker.HintMessage.class, this::handle)
 				.match(Worker.GotSomeCrackBro.class, this::handle)
 				.match(LargeMessageProxy.LargeMessage.class, this::handle)
@@ -142,7 +143,7 @@ public class Master extends AbstractLoggingActor {
 	}
 
 	protected void handle(BatchMessage message) throws InterruptedException {
-		this.log().info("Receiving BatchMessage " + message);
+		this.log().info("Receiving BatchMessage.");
 		// - The Master received the first batch of input records.
 		// - To receive the next batch, we need to send another ReadMessage to the reader.
 		// - If the received BatchMessage is empty, we have seen all data for this task.
@@ -195,17 +196,6 @@ public class Master extends AbstractLoggingActor {
 			}
 		}
 
-		if(isInitialRead){
-			// assign initial tasks to workers
-			for(ActorRef worker: workers){
-				Worker.TaskMessage nextTask = taskQueue.pollFirst();
-				if (nextTask != null) {
-					this.largeMessageProxy.tell(new LargeMessageProxy.LargeMessage<>(nextTask, worker), this.self());
-				}
-			}
-			isInitialRead = false;
-		}
-
 		// Fetch further lines from the Reader
 		this.reader.tell(new Reader.ReadMessage(), this.self());
 	}
@@ -232,19 +222,20 @@ public class Master extends AbstractLoggingActor {
 	protected void handle(RegistrationMessage message) {
 		this.context().watch(this.sender());
 		this.workers.add(this.sender());
-		this.log().info("Registered {}", this.sender());;;
-		Worker.TaskMessage nextTask = taskQueue.pollFirst();
-		if (nextTask != null) {
-			this.largeMessageProxy.tell(new LargeMessageProxy.LargeMessage<>(nextTask, this.sender()), this.self());
-		}
+		this.log().info("Registered {}", this.sender());
+
+		this.largeMessageProxy.tell(new LargeMessageProxy.LargeMessage<>(new Worker.WelcomeMessage(this.welcomeData), sender()), this.self());
 	}
 
-	protected void handle(Worker.FinishedTaskMessage message){
+	protected void handle(Worker.AskForTaskMessage message){
 		this.log().info(sender().toString() + " finished their Task.");
 		Worker.TaskMessage nextTask = taskQueue.pollFirst();
 		if (nextTask != null) {
 			this.log().info("Assigning new task to: " + this.sender().toString());
 			this.largeMessageProxy.tell(new LargeMessageProxy.LargeMessage<>(nextTask, this.sender()), this.self());
+		} else {
+			this.log().info("No new task available for " + this.sender().toString());
+			sender().tell(new NoWorkAvailableMessage(), self());
 		}
 	}
 	protected void handle(Worker.GotSomeCrackBro message){

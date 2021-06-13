@@ -50,7 +50,7 @@ public class Worker extends AbstractLoggingActor {
 		private BloomFilter welcomeData;
 	}
 
-	@Data @AllArgsConstructor
+	@Data @AllArgsConstructor @NoArgsConstructor
 	public static class HintMessage implements Serializable{
 		private static final long serialVersionUID = 3303081601659723990L;
 		private int userId;
@@ -68,12 +68,12 @@ public class Worker extends AbstractLoggingActor {
 
 	@Data @AllArgsConstructor @NoArgsConstructor
 	public static class GotSomeCrackBro implements Serializable{ //theres some crack
-		private static final long serialVersionUID = 8343040952768609598L;
+		private static final long serialVersionUID = 8343040952748609500L;
 		private int userId;
 		private String decryptedPassword;
 	}
 
-	@Data
+	@Data @NoArgsConstructor
 	public static class TaskMessage implements Serializable{
 		private static final long serialVersionUID = 1111040962748609598L;
 	}
@@ -86,17 +86,17 @@ public class Worker extends AbstractLoggingActor {
 		private int passwordLength;
 		private String hash;
 	}
+
 	@Data @AllArgsConstructor @NoArgsConstructor
 	public static class HintTaskMessage extends TaskMessage implements Serializable{
-		private static final long serialVersionUID = 8343040962748609528L;
+		private static final long serialVersionUID = 8343111111748609528L;
 		private String characters;
 		private char missingChar;
 		private ArrayList<UserHint> userHints;
 	}
 
-
 	@Getter	@NoArgsConstructor
-	public static class FinishedTaskMessage implements Serializable{
+	public static class AskForTaskMessage implements Serializable{
 		private static final long serialVersionUID = 8343040962749609598L;
 	}
 
@@ -108,7 +108,7 @@ public class Worker extends AbstractLoggingActor {
 	private final Cluster cluster;
 	private final ActorRef largeMessageProxy;
 	private long registrationTime;
-	
+
 	/////////////////////
 	// Actor Lifecycle //
 	/////////////////////
@@ -138,6 +138,8 @@ public class Worker extends AbstractLoggingActor {
 				.match(WelcomeMessage.class, this::handle)
 				.match(HintTaskMessage.class, this::handle)
 				.match(CrackTaskMessage.class, this::handle)
+				.match(Master.NoWorkAvailableMessage.class, this::handle)
+				// .match(LookForWork.class, this::handle)
 				.matchAny(object -> this.log().info("Received unknown message: \"{}\"", object.toString()))
 				.build();
 	}
@@ -173,6 +175,21 @@ public class Worker extends AbstractLoggingActor {
 	private void handle(WelcomeMessage message) {
 		final long transmissionTime = System.currentTimeMillis() - this.registrationTime;
 		this.log().info("WelcomeMessage with " + message.getWelcomeData().getSizeInMB() + " MB data received in " + transmissionTime + " ms.");
+
+		this.getContext()
+				.actorSelection(this.masterSystem.address() + "/user/" + Master.DEFAULT_NAME)
+				.tell(new AskForTaskMessage(), this.self());
+		// self().tell(new LookForWork(), this.self());
+	}
+
+	private void handle(Master.NoWorkAvailableMessage message) throws InterruptedException {
+		this.log().info("There was no work to do. Retrying in 8 Seconds");
+
+		Thread.sleep(8000);
+
+		this.getContext()
+				.actorSelection(this.masterSystem.address() + "/user/" + Master.DEFAULT_NAME)
+				.tell(new AskForTaskMessage(), this.self());
 	}
 
 	private void handle(CrackTaskMessage message) {
@@ -194,11 +211,11 @@ public class Worker extends AbstractLoggingActor {
 
 		this.getContext()
 				.actorSelection(this.masterSystem.address() + "/user/" + Master.DEFAULT_NAME)
-				.tell(new FinishedTaskMessage(), this.self());
-}
+				.tell(new AskForTaskMessage(), this.self());
+	}
 
 private void handle(HintTaskMessage message) {
-		this.log().info("Received HintTaskMessage");
+	this.log().info("Received HintTaskMessage");
 		HashMap<String, Integer> hints = new HashMap<>();
 		for(UserHint userHint : message.getUserHints()){
 			for(String hash: userHint.getEncryptedHints()){
@@ -209,13 +226,10 @@ private void handle(HintTaskMessage message) {
 		ArrayList<String> permutations = new ArrayList<>();
 		heapPermutation(message.getCharacters().toCharArray(), message.getCharacters().length(), message.getCharacters().length(), permutations);
 
-		int hintsFounds = 0;
-
 		for(String permutation : permutations){
 			String hash = hash(permutation);
 			Integer user = hints.get(hash);
 			if (user != null) {
-				hintsFounds++;
 				this.getContext()
 						.actorSelection(this.masterSystem.address() + "/user/" + Master.DEFAULT_NAME)
 						.tell(new HintMessage(user, message.getMissingChar(), hash, permutation), this.self());
@@ -223,10 +237,9 @@ private void handle(HintTaskMessage message) {
 			hints.remove(hash);
 		}
 
-
 		this.getContext()
 				.actorSelection(this.masterSystem.address() + "/user/" + Master.DEFAULT_NAME)
-				.tell(new FinishedTaskMessage(), this.self());
+				.tell(new AskForTaskMessage(), this.self());
 
 	}
 
