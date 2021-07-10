@@ -25,14 +25,12 @@ object Sindy {
       ))
       allCells = allCells.union(newCells)
     })
-    val inclusionLists = allCells.groupByKey(cell => cell._1)
+    val attributeLists = allCells.groupByKey(cell => cell._1)
       //group by value and unite columnNames to set
       .mapGroups((key, iterator) => iterator.map(cell => cell._2).toList.distinct)
       //create inclusion lists with dependant, referenced columns
-      .flatMap(attributeSet => {
-          val references = attributeSet.map(dependant => (dependant, attributeSet.filter(reference => reference != dependant)))
-          //filter out empty reference lists
-        references
+    val inclusionLists = attributeLists.flatMap(attributeSet => {
+        attributeSet.map(dependant => (dependant, attributeSet.filter(reference => reference != dependant)))
         })
     val result = inclusionLists
       .groupByKey(inclusionList => inclusionList._1)
